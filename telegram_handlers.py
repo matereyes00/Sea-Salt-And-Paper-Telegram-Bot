@@ -15,6 +15,9 @@ from telegram.ext import (
 from langchain_core.messages import HumanMessage, AIMessage
 from utils.game_logic import calculate_score, calculate_color_bonus
 from knowledge_base_manager import get_conversation_chain
+from langchain_google_genai import ChatGoogleGenerativeAI
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +63,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chat_history": context.chat_data.get('history', [])
         })
 
-        answer = response.get("answer", "I'm not sure how to respond to that.")
-        if not answer.strip():
-            raise ValueError("Empty response from model")
+        local_answer = response.get("answer", "").strip()
+        online_answer = None
+
+        # --- Try fetching extra context online (parallel optional) ---
+        try:
+            online_answer = await fetch_online_info_with_gemini(user_question)
+        except Exception as e:
+            logger.warning(f"Gemini fallback failed: {e}")
+
+        # --- Merge responses ---
+        if local_answer and online_answer:
+            answer = (
+                f"🧩 **According to the rulebook:**\n{local_answer}\n\n"
+                f"🌐 **From online sources:**\n{online_answer}"
+            )
+        elif local_answer:
+            answer = local_answer
+        elif online_answer:
+            answer = f"🌐 *I couldn’t find this in the rulebook, but here’s what I found online:*\n\n{online_answer}"
+        else:
+            answer = "⚠️ Sorry, I couldn’t find any information on that — even online."
 
         # Update the user's chat history with the new exchange
         context.chat_data['history'].extend([
@@ -189,6 +210,28 @@ async def handle_color_bonus_choice(update: Update, context: ContextTypes.DEFAUL
         parse_mode=ParseMode.MARKDOWN_V2
     )
 
+
+async def fetch_online_info_with_gemini(query: str):
+    """Fetches supporting online info using Gemini."""
+    try:
+        gemini = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-lite",
+            temperature=0.7,
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+
+        prompt = (
+            "Search for the most accurate and recent information about the card game "
+            "'Sea Salt & Paper'. Summarize it concisely. If there’s overlap with rulebook info, clarify it.\n\n"
+            f"Question: {query}"
+        )
+
+        response = await gemini.ainvoke(prompt)
+        return response.content if hasattr(response, "content") else str(response)
+    
+    except Exception as e:
+        logger.error(f"Gemini fetch failed: {e}")
+        return None
 
 
 def setup_telegram_bot(vectorstore, port: int, webhook_url: str):
