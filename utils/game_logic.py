@@ -30,16 +30,20 @@ def calculate_score(card_text: str):
     """Parses a string of cards and calculates the total score."""
     card_counts = defaultdict(int)
     
-    # Simple regex to find "number card_name" patterns
-    pattern = re.compile(r"(\d+)\s+([a-zA-Z\s]+)")
-    matches = pattern.findall(card_text.lower())
+    # Build a dynamic regex from the card map keys.
+    # Sort keys by length, descending, to match longer names first (e.g., "shoal of fish" before "fish").
+    sorted_card_names = sorted(CARD_MAP.keys(), key=len, reverse=True)
+    card_pattern = "|".join(re.escape(name) for name in sorted_card_names)
+    
+    # This pattern finds all occurrences of "number card_name" in the text.
+    pattern = re.compile(r"(\d+)\s+(" + card_pattern + r")", re.IGNORECASE)
+    matches = pattern.findall(card_text)
 
     if not matches:
-        return "Please list your cards in the format: `/score 2 crabs, 3 shells, 1 lighthouse`", {}
+        return "I couldn't find any valid cards in your message. Please use the format: `/score 2 crabs, 3 shells`", {}
 
     for count, name in matches:
-        name = name.strip()
-        canonical_name = CARD_MAP.get(name)
+        canonical_name = CARD_MAP.get(name.lower().strip())
         if canonical_name:
             card_counts[canonical_name] += int(count)
 
@@ -47,7 +51,6 @@ def calculate_score(card_text: str):
     score_breakdown = []
 
     # --- Calculate Score ---
-
     # 1. Collector Cards
     if "shell" in card_counts:
         count = min(card_counts["shell"], len(SHELL_POINTS) - 1)
@@ -81,17 +84,24 @@ def calculate_score(card_text: str):
                 total_score += pairs
                 score_breakdown.append(f"{pairs} pair(s) of {card.capitalize()}s: {pairs} pts")
 
-    # Shark + Swimmer combo (different from regular pairs)
-    # Shark + Swimmer combo (1 point per combination of different cards)
-    if "shark" in card_counts and "swimmer" in card_counts:
-        combos = min(card_counts["shark"], card_counts["swimmer"])
+    # Shark + Swimmer combo (1 point per combo of 1 Shark + 1 Swimmer)
+    sharks = card_counts.get("shark", 0)
+    swimmers = card_counts.get("swimmer", 0)
+    
+    if sharks > 0 or swimmers > 0:
+        combos = min(sharks, swimmers)
+        leftover_sharks = sharks - combos
+        leftover_swimmers = swimmers - combos
+        
         if combos > 0:
             total_score += combos
             score_breakdown.append(f"{combos} Shark+Swimmer combo(s): {combos} pts")
-    elif "shark" in card_counts or "swimmer" in card_counts:
-        # If player only has sharks OR swimmers (not both), no points
-        pass
-
+        
+        if leftover_sharks > 0:
+            score_breakdown.append(f"{leftover_sharks} leftover Shark(s): 0 pts")
+            
+        if leftover_swimmers > 0:
+            score_breakdown.append(f"{leftover_swimmers} leftover Swimmer(s): 0 pts")
 
     # 3. Multiplier Cards
     if "lighthouse" in card_counts and "boat" in card_counts:

@@ -18,3 +18,4 @@ pycache/
 .vscode/
 
 getModels.py
+__pycache__/
