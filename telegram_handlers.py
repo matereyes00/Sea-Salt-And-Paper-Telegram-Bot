@@ -1,7 +1,7 @@
 import os
 import re
 import logging
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
@@ -9,11 +9,15 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     filters,
+    CallbackQueryHandler,
 )
 # New imports for handling conversation history
 from langchain_core.messages import HumanMessage, AIMessage
 from utils.game_logic import calculate_score, calculate_color_bonus
 from knowledge_base_manager import get_conversation_chain
+from langchain_google_genai import ChatGoogleGenerativeAI
+from dotenv import load_dotenv
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +63,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "chat_history": context.chat_data.get('history', [])
         })
 
-        answer = response.get("answer", "I'm not sure how to respond to that.")
-        if not answer.strip():
-            raise ValueError("Empty response from model")
+        local_answer = response.get("answer", "").strip()
+        online_answer = None
+
+        # --- Try fetching extra context online (parallel optional) ---
+        try:
+            online_answer = await fetch_online_info_with_gemini(user_question)
+        except Exception as e:
+            logger.warning(f"Gemini fallback failed: {e}")
+
+        # --- Merge responses ---
+        if local_answer and online_answer:
+            answer = (
+                f"🧩 **According to the rulebook:**\n{local_answer}\n\n"
+                f"🌐 **From online sources:**\n{online_answer}"
+            )
+        elif local_answer:
+            answer = local_answer
+        elif online_answer:
+            answer = f"🌐 *I couldn’t find this in the rulebook, but here’s what I found online:*\n\n{online_answer}"
+        else:
+            answer = "⚠️ Sorry, I couldn’t find any information on that — even online."
 
         # Update the user's chat history with the new exchange
         context.chat_data['history'].extend([
@@ -104,15 +126,113 @@ async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text=escaped_response, parse_mode=ParseMode.MARKDOWN_V2)
 
 async def color_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Calculates the color bonus for a list of cards."""
-    user_input = update.message.text.partition(' ')[2]
+    """Step 1: Ask user to choose the round outcome via inline buttons."""
+    user_input = update.message.text.partition(' ')[2].strip()
+
     if not user_input:
-        example_text = "Please list your cards by color count\\. \nExample: `/color_bonus 4 blue, 3 pink, 1 mermaid`"
-        await update.message.reply_text(text=example_text, parse_mode=ParseMode.MARKDOWN_V2)
+        example_text = (
+            "Please list your cards by color count. \n"
+            "Example: `/color_bonus 4 blue, 3 pink, 1 mermaid`"
+        )
+        await update.message.reply_text(
+            text=escape_markdown(example_text),
+            parse_mode=ParseMode.MARKDOWN_V2
+        )
         return
-    response_text = calculate_color_bonus(user_input)
-    escaped_response = escape_markdown(response_text)
-    await update.message.reply_text(text=escaped_response, parse_mode=ParseMode.MARKDOWN_V2)
+
+    # Save the card info temporarily (for callback use)
+    context.user_data["color_bonus_input"] = user_input
+
+    # Inline buttons for outcome selection
+    keyboard = [
+        [
+            InlineKeyboardButton("Caller Win ✅ (You called + won)", callback_data="color_bonus_caller_win"),
+            InlineKeyboardButton("Caller Fail ❌ (You called + lost)", callback_data="color_bonus_caller_fail"),
+        ],
+        [
+            InlineKeyboardButton("Other Wins 🧍‍♂️ (Someone else called + won)", callback_data="color_bonus_other_win"),
+            InlineKeyboardButton("Stop 🛑 (Normal end, no bonus)", callback_data="color_bonus_stop"),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "Choose how the round ended:",
+        reply_markup=reply_markup
+    )
+
+
+async def handle_color_bonus_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 2: Handle which color bonus scenario the user chose (with clarification text)."""
+    query = update.callback_query
+    await query.answer()  # Acknowledge button press
+
+    user_input = context.user_data.get("color_bonus_input", "")
+    if not user_input:
+        await query.edit_message_text("⚠️ Please send `/color_bonus` again first.")
+        return
+
+    # Default flags
+    called_last_chance, caller, caller_succeeded = True, True, True
+
+    # --- Determine which option was chosen ---
+    if query.data == "color_bonus_stop":
+        called_last_chance = False
+        clarification = "🛑 *Round ended normally with Stop* — no color bonus is scored."
+    elif query.data == "color_bonus_caller_fail":
+        caller_succeeded = False
+        clarification = "❌ *You called Last Chance but lost* — you score only your color bonus."
+    elif query.data == "color_bonus_other_win":
+        caller = False
+        caller_succeeded = True
+        clarification = "🧍‍♂️ *Another player called Last Chance and succeeded* — you score only your color bonus."
+    else:  # default: caller win
+        clarification = "✅ *You called Last Chance and won* — you keep your full card points plus color bonus."
+
+    # --- Compute color bonus using your logic ---
+    bonus_points, explanation = calculate_color_bonus(
+        user_input,
+        called_last_chance=called_last_chance,
+        caller=caller,
+        caller_succeeded=caller_succeeded
+    )
+
+    # --- Combine clarification + result ---
+    final_message = (
+        f"{clarification}\n\n"
+        f"🎨 *Color Bonus: {bonus_points} point(s)*\n\n"
+        f"{explanation}"
+    )
+
+    escaped_response = escape_markdown(final_message)
+    await query.edit_message_text(
+        text=escaped_response,
+        parse_mode=ParseMode.MARKDOWN_V2
+    )
+
+
+async def fetch_online_info_with_gemini(query: str):
+    """Fetches supporting online info using Gemini."""
+    try:
+        gemini = ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash-lite",
+            temperature=0.7,
+            google_api_key=os.getenv("GOOGLE_API_KEY")
+        )
+
+        prompt = (
+            "Search for the most accurate and recent information about the card game "
+            "'Sea Salt & Paper'. Summarize it concisely. If there’s overlap with rulebook info, clarify it.\n\n"
+            f"Question: {query}"
+        )
+
+        response = await gemini.ainvoke(prompt)
+        return response.content if hasattr(response, "content") else str(response)
+    
+    except Exception as e:
+        logger.error(f"Gemini fetch failed: {e}")
+        return None
+
 
 def setup_telegram_bot(vectorstore, port: int, webhook_url: str):
     """Initializes and runs the Telegram bot with webhooks."""
@@ -126,6 +246,7 @@ def setup_telegram_bot(vectorstore, port: int, webhook_url: str):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler('score', score))
     app.add_handler(CommandHandler('color_bonus', color_bonus))
+    app.add_handler(CallbackQueryHandler(handle_color_bonus_choice, pattern="^color_bonus_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
@@ -149,6 +270,7 @@ def setup_telegram_bot_local(vectorstore):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler('score', score))
     app.add_handler(CommandHandler('color_bonus', color_bonus))
+    app.add_handler(CallbackQueryHandler(handle_color_bonus_choice, pattern="^color_bonus_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
     
