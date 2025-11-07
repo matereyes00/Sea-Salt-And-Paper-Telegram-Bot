@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.vectorstores import FAISS  # <-- corrected import
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_google_genai import GoogleGenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
 from langchain.chains.llm import LLMChain 
@@ -28,7 +28,7 @@ def load_vectorstore():
             f"FAISS index not found at '{FAISS_INDEX_PATH}'. "
             "Please run 'create_vectorstore.py' first."
         )
-    embeddings = GoogleGenAIEmbeddings(model="models/embedding-001", google_api_key=google_api_key)
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=google_api_key)
     vectorstore = FAISS.load_local(
         FAISS_INDEX_PATH, 
         embeddings,
