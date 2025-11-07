@@ -1,6 +1,8 @@
 import os
 import re
 import logging
+import traceback
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -16,15 +18,25 @@ from langchain_core.messages import HumanMessage, AIMessage
 from utils.game_logic import calculate_score, calculate_color_bonus
 from knowledge_base_manager import get_conversation_chain
 from langchain_google_genai import ChatGoogleGenerativeAI
+from utils.rag_pipeline import rag_pipeline
+
 from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-def escape_markdown(text: str) -> str:
-    """Escapes special characters for Telegram's MarkdownV2."""
-    escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+def escape_markdown(text) -> str:
+    """Safely escape MarkdownV2 characters for Telegram, even if text isn't a string."""
+    try:
+        if text is None:
+            return ""
+        text = str(text)  # ensure string
+        escape_chars = r'_*[]()~`>#+-=|{}.!'
+        return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    except Exception as e:
+        import traceback, logging
+        logging.error(f"[escape_markdown] Failed for {type(text)}: {e}\n{traceback.format_exc()}")
+        return str(text)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Greets the user and tells them the bot is ready."""
@@ -37,78 +49,75 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles questions from the user using a history-aware chain."""
-    # Lazy initialization of the RAG chain
-    if "rag_chain" not in context.application.bot_data:
-        vectorstore = context.application.bot_data["vectorstore"]
-        context.application.bot_data["rag_chain"] = get_conversation_chain(vectorstore)
-        logger.info("RAG chain initialized on first use.")
-    
-    rag_chain = context.application.bot_data["rag_chain"]
-    user_question = update.message.text
-    
-    # Use context.chat_data to store history for each unique user
-    if 'history' not in context.chat_data:
-        context.chat_data['history'] = []
-
-    thinking_message = await context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="🤔 Thinking..."
-    )
+    """Handle messages from Telegram users."""
+    logger.info("🟢 handle_message invoked")
 
     try:
-        # Invoke the new chain with the user's input and their chat history
-        response = await rag_chain.ainvoke({
-            "input": user_question,
-            "chat_history": context.chat_data.get('history', [])
-        })
+        # Get message text
+        message_text = update.message.text if update.message else None
+        logger.info(f"📥 User message received: {repr(message_text)}")
 
-        local_answer = response.get("answer", "").strip()
-        online_answer = None
+        if not message_text:
+            logger.warning("⚠️ No message text found in update.")
+            return
 
-        # --- Try fetching extra context online (parallel optional) ---
-        try:
-            online_answer = await fetch_online_info_with_gemini(user_question)
-        except Exception as e:
-            logger.warning(f"Gemini fallback failed: {e}")
+        # 1. Lazy init the RAG chain (Retrieving vectorstore and passing it)
+        if "conversation_chain" not in context.chat_data:
+            logger.info("Initializing RAG chain on first use...")
+            
+            # Retrieve the vectorstore stored during the bot's setup (in setup_telegram_bot_local)
+            vectorstore = context.bot_data.get("vectorstore") 
+            if not vectorstore:
+                    raise ValueError("Vectorstore not found in bot_data. Check setup_telegram_bot_local.")
 
-        # --- Merge responses ---
-        if local_answer and online_answer:
-            answer = (
-                f"🧩 **According to the rulebook:**\n{local_answer}\n\n"
-                f"🌐 **From online sources:**\n{online_answer}"
-            )
-        elif local_answer:
-            answer = local_answer
-        elif online_answer:
-            answer = f"🌐 *I couldn’t find this in the rulebook, but here’s what I found online:*\n\n{online_answer}"
-        else:
-            answer = "⚠️ Sorry, I couldn’t find any information on that — even online."
+            # Call the function from knowledge_base_manager with the vectorstore
+            # NOTE: Assuming get_conversation_chain is imported from knowledge_base_manager.
+            context.chat_data["conversation_chain"] = get_conversation_chain(vectorstore)
+            logger.info("RAG chain initialized successfully.")
 
-        # Update the user's chat history with the new exchange
-        context.chat_data['history'].extend([
-            HumanMessage(content=user_question),
-            AIMessage(content=answer)
-        ])
+        conversation_chain = context.chat_data["conversation_chain"]
+
+        # 2. Process the message (Correct Invocation)
+        logger.info("💬 Invoking RAG chain...")
         
-        # Keep the history from getting too long
-        if len(context.chat_data['history']) > 8:
-            context.chat_data['history'] = context.chat_data['history'][-8:]
+        # ConversationalRetrievalChain expects a dictionary input with the key 'question'.
+        response = await conversation_chain.ainvoke({"question": message_text}) 
+        
+        logger.info(f"✅ RAG response: {repr(response)}")
 
-        final_text = escape_markdown(str(answer))
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=thinking_message.message_id,
-            text=final_text,
-            parse_mode=ParseMode.MARKDOWN_V2
+        # 3. Extract the answer (Correct Extraction)
+        # The ConversationalRetrievalChain returns a dict, with the answer under the 'answer' key.
+        raw_answer = response.get("answer", str(response))
+        answer = str(raw_answer).strip()
+        logger.info(f"🧩 Final answer text ready: {repr(answer[:300])}")
+
+        # Escape for Markdown
+        logger.info("🔧 Escaping Markdown...")
+        escaped_answer = escape_markdown(answer)
+        logger.info(f"✅ Markdown escaped successfully: {escaped_answer[:300]}")
+
+        # Send typing indicator first
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+        # Send response
+        logger.info("📤 Sending message to Telegram...")
+        await update.message.reply_text(
+            escaped_answer,
+            parse_mode="MarkdownV2"
         )
+        logger.info("✅ Message successfully sent.")
+
     except Exception as e:
-        logger.error(f"Error during conversation chain invocation: {e}")
-        await context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=thinking_message.message_id,
-            text="⚠️ Sorry, I had trouble generating an answer. Please try asking again."
-        )
+        logger.error(f"💥 Error during conversation chain invocation: {e}")
+        logger.error(traceback.format_exc())
+
+        # Send a user-friendly error message
+        try:
+            await update.message.reply_text(
+                "⚠️ Sorry, I had trouble generating an answer. Please try again."
+            )
+        except Exception as nested_e:
+            logger.error(f"Failed to send error message: {nested_e}")
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Logs errors."""
@@ -215,13 +224,13 @@ async def fetch_online_info_with_gemini(query: str):
     """Fetches supporting online info using Gemini."""
     try:
         gemini = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-lite",
+            model="gemini-2.5-flash-lite",
             temperature=0.7,
             google_api_key=os.getenv("GOOGLE_API_KEY")
         )
 
         prompt = (
-            "Search for the most accurate and recent information about the card game "
+            "Search for the most accurate and recent information about the card game and its expansion packs"
             "'Sea Salt & Paper'. Summarize it concisely. If there’s overlap with rulebook info, clarify it.\n\n"
             f"Question: {query}"
         )

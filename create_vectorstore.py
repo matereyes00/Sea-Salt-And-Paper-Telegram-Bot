@@ -1,8 +1,8 @@
 import logging
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.docstore.document import Document
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from games.sea_salt_and_paper import RULES_TEXT
 
 logging.basicConfig(level=logging.INFO)
