@@ -59,8 +59,7 @@ pydantic==2.12.4
 pydantic-settings==2.11.0
 pydantic_core==2.41.5
 python-dotenv==1.2.1
-python-telegram-bot==22.5
-python-telegram-bot[webhooks]==21.3
+python-telegram-bot[webhooks]==22.5
 PyYAML==6.0.3
 regex==2025.11.3
 requests==2.32.5
