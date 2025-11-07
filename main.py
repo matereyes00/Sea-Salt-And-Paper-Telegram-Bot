@@ -2,7 +2,7 @@ import os
 import logging
 from knowledge_base_manager import load_vectorstore
 from telegram_handlers import setup_telegram_bot
-from dotenv import load_dotenv
+from dotenv import load_dotenv # type: ignore
 
 load_dotenv()
 logging.basicConfig(
