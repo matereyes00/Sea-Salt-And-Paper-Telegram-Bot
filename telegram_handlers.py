@@ -259,12 +259,19 @@ def setup_telegram_bot(vectorstore, port: int, webhook_url: str):
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
 
+    WEBHOOK_PATH = "/webhook"
     logger.info(f"Starting webhook server on 0.0.0.0:{port}")
+    # app.run_webhook(
+    #     listen="0.0.0.0",
+    #     port=port,
+    #     url_path=bot_token,
+    #     webhook_url=f"{webhook_url}/{bot_token}"
+    # )
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path=bot_token,
-        webhook_url=f"{webhook_url}/{bot_token}"
+        url_path=WEBHOOK_PATH, # <-- Local server now listens at /webhook
+        webhook_url=f"{webhook_url}{WEBHOOK_PATH}" # <-- Telegram is instructed to send updates to your URL + /webhook
     )
 
 def setup_telegram_bot_local(vectorstore):
