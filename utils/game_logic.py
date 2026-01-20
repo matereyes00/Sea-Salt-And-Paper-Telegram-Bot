@@ -28,12 +28,7 @@ CARD_MAP = {
     "lighthouse": "lighthouse",
     "shoal": "shoal", "shoal of fish": "shoal",
     "colony": "colony", "penguin colony": "colony",
-    "captain": "captain",
-    "basket": "basket", "basket of crabs": "basket",
-    "jellyfish": "jellyfish", "jellyfishes": "jellyfish",
-    "seahorse": "seahorse",
-    "starfish": "starfish",
-    "lobster": "lobster",
+    "captain": "captain"
 }
 
 def calculate_score(card_text: str):
@@ -58,26 +53,6 @@ def calculate_score(card_text: str):
     score_breakdown = []
 
     # --- Collector Cards ---
-    if "seahorse" in card_counts and card_counts["seahorse"] > 0:
-        max_gain = -1
-        best_collector_type = None
-        for collector_type in COLLECTOR_TYPES:
-            if card_counts.get(collector_type, 0) > 0:
-                current_count = card_counts[collector_type]
-                new_count = current_count + 1
-                points_array = COLLECTOR_POINTS_MAP[collector_type]
-                current_points_index = min(current_count, len(points_array) - 1)
-                new_points_index = min(new_count, len(points_array) - 1)
-                gain = points_array[new_points_index] - points_array[current_points_index]
-                if gain > max_gain:
-                    max_gain = gain
-                    best_collector_type = collector_type
-
-        if best_collector_type is not None and max_gain > 0:
-            card_counts["seahorse"] -= 1
-            card_counts[best_collector_type] += 1
-            score_breakdown.append(f"1 Seahorse used for {best_collector_type}: +{max_gain} pts")
-
     # Scoring collector sets
     for card, points_list in COLLECTOR_POINTS_MAP.items():
         if card in card_counts:
@@ -97,7 +72,6 @@ def calculate_score(card_text: str):
     # --- Duo Combos ---
     sharks = card_counts.get("shark", 0)
     swimmers = card_counts.get("swimmer", 0)
-    jellyfish = card_counts.get("jellyfish", 0)
 
     # 🦈 Shark + Swimmer
     if sharks > 0 and swimmers > 0:
@@ -109,66 +83,6 @@ def calculate_score(card_text: str):
     leftover_sharks = sharks - min(sharks, card_counts.get("swimmer", 0))
     if leftover_sharks > 0:
         score_breakdown.append(f"{leftover_sharks} leftover Shark(s): 0 pts")
-
-    # 🪼 Jellyfish + Swimmer
-    if jellyfish > 0 and swimmers > 0:
-        combos = min(jellyfish, swimmers)
-        total_score += combos
-        score_breakdown.append(f"{combos} Jellyfish+Swimmer combo(s): {combos} pts")
-        swimmers -= combos
-
-    leftover_jellyfish = jellyfish - min(jellyfish, card_counts.get("swimmer", 0))
-    if leftover_jellyfish > 0:
-        score_breakdown.append(f"{leftover_jellyfish} leftover Jellyfish(es): 0 pts")
-
-    if swimmers > 0:
-        score_breakdown.append(f"{swimmers} leftover Swimmer(s): 0 pts")
-
-    # 🦞 Crab + Lobster
-    crabs = card_counts.get("crab", 0)
-    lobsters = card_counts.get("lobster", 0)
-    if crabs > 0 and lobsters > 0:
-        combos = min(crabs, lobsters)
-        total_score += combos
-        score_breakdown.append(f"{combos} Crab+Lobster combo(s): {combos} pts")
-        crabs -= combos
-        lobsters -= combos
-    leftover_crabs = crabs - min(crabs, card_counts.get("lobster", 0))
-    if leftover_crabs > 0:
-        if card_counts.get("basket", 0) > 0:
-            score_breakdown.append(f"{leftover_crabs} leftover Crab(s): counted by Basket")
-        else:
-            score_breakdown.append(f"{leftover_crabs} leftover Crab(s): 0 pts")
-    if lobsters > 0:
-        score_breakdown.append(f"{lobsters} leftover Lobster(s): 0 pts")
-
-        # 🩷 Starfish Trio Logic
-    starfish = card_counts.get("starfish", 0)
-    if starfish > 0:
-        trio_points = 0
-        used_starfish = 0
-
-        # Define which pairs can form duos
-        duo_pairs = {
-            "crab": card_counts.get("crab", 0) // 2,
-            "boat": card_counts.get("boat", 0) // 2,
-            "fish": card_counts.get("fish", 0) // 2,
-            "shark_swimmer": min(card_counts.get("shark", 0), card_counts.get("swimmer", 0)),
-            "jellyfish_swimmer": min(card_counts.get("jellyfish", 0), card_counts.get("swimmer", 0)),
-            "crab_lobster": min(card_counts.get("crab", 0), card_counts.get("lobster", 0)),
-        }
-
-        # Each trio replaces the duo score (1 point) with 3 points → net gain of +2
-        for pair_name, num_duos in duo_pairs.items():
-            while num_duos > 0 and starfish > 0:
-                trio_points += 3
-                used_starfish += 1
-                starfish -= 1
-                num_duos -= 1
-
-        if used_starfish > 0:
-            total_score += trio_points  # already accounts for trio points
-            score_breakdown.append(f"{used_starfish} Starfish Trio(s): {trio_points} pts (duo effect canceled)")
     
     # --- Multiplier Cards ---
     if "lighthouse" in card_counts and "boat" in card_counts:
@@ -190,11 +104,6 @@ def calculate_score(card_text: str):
         points = card_counts["captain"] * card_counts["sailor"] * 3
         total_score += points
         score_breakdown.append(f"Captain + Sailors: {points} pts")
-
-    if "basket" in card_counts and "crab" in card_counts:
-        points = card_counts["basket"] * card_counts["crab"]
-        total_score += points
-        score_breakdown.append(f"Basket + Crabs: {points} pts")
 
     # --- Final Output ---
     if not score_breakdown:

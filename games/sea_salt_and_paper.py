@@ -10,33 +10,24 @@ Sea Salt & Paper
 ### Base Game
 58 cards, 6 game aids, a rulebook.
 - 4 mermaid cards
-### Extra Sea Salt Expansion
-8 cards, 4 rule cards, 1 winner card
-### Extra Pepper Expansion
-12 cards
 
 **Collector Cards**
 - 5 octopus cards
 - 6 shell cards
 - 3 penguin cards 
 - 2 sailor cards
-- Extra Salt: 1 sea horse card
 
 **Duo Cards**
 - 7 fish cards
 - 8 boat cards
 - 9 crab cards
 - 5 shark cards and swimmer cards
-- Extra Salt: 2 jellyfish cards
-- Extra Salt: 1 lobster card
-- Extra Salt: 3 starfish cards
 
 **Point Multiplier cards**
 - 1 lighthouse card
 - 1 shoal of fish card
 - 1 penguin colony card
 - 1 captain card
-- Extra Salt: 1 basket of crabs card
 
 ## GAME OBJECTIVE
 Be the first player to reach the required number of points to win the game. The game is played over several rounds.
@@ -93,10 +84,6 @@ If the deck runs out of cards, the round ends immediately. No players score any 
 - **Boats (Pair):** Immediately take another full turn.
 - **Fish (Pair):** Draw the top card from the deck.
 - **Shark + Swimmer (Pair):** Steal a random card from an opponent's hand.
-### EXTRA SALT EXPANSION - Duo Card Effects
-- **Lobster + Crab (Pair):** The player takes the first five cards from the deck, adds one of them to their hand, then returns the other four to the deck and shuffles it
-- **Jellyfish + Swimmer (Pair):** On their next turn, opposing players can only draw the first card from the deck. They cannot play any cards nor end the round.
-- **Any valid duo pair + Starfish:** If a player has a duo and a starfish card in their hand, they can form a trio and place these three cards in front of them. The starfish adds 2 points to the duo (so the trio is worth 3 points). Effect: Cancels the effect of the duo cards placed with the starfish.
 
 ### Collector Cards
 These cards score points based on how many you collect.
@@ -104,8 +91,6 @@ These cards score points based on how many you collect.
 - Octopus
 - Penguins
 - Sailors
-#### EXTRA SALT EXPANSION: Collector Cards
-- Seahorse: The player can use the seahorse to replace a missing Collector card (octopus, shell, penguin or sailor). They must have at least one card for that collection in their hand. They cannot gain more points than the maximum indicated on the matching Collector card.
 
 ### Bonus Cards
 These cards help you earn the Color Bonus at the end of a round.
@@ -122,16 +107,12 @@ Points are calculated at the end of a round.
 
 ### Duo Card Scoring
 - **Any pair of Duo cards** (Crabs, Boats, Fish, Shark+Swimmer, Jellyfish+Swimmer, Lobster+Crab) is worth **1 point**.
-### EXTRA SALT EXPANSION: Duo Card Scoring
-- **Any pair of Duo cards (Crabs, Boats, Fish, Shark+Swimmer, Jellyfish+Swimmer, Lobster+Crab) + starfish* adds **2 points** to the duo pair. Though, this cancels the effect of
-the duo cards placed with the starfish.
 
 ### Collector Card Scoring
 - **Shells:** 1=0 pts, 2=2 pts, 3=4 pts, 4=6 pts, 5=8 pts, 6=10 pts.
 - **Octopus:** 1=0 pts, 2=3 pts, 3=6 pts, 4=9 pts, 5=12 pts.
 - **Penguins:** 1=1 pt, 2=3 pts, 3=5 pts.
 - **Sailors:** 1=0 pts, 2=5 pts.
-- **Seahorse**: Points are **dynamic**. The Seahorse card is worth the point increase it provides when substituting for a **single** missing Collector card. (e.g., boosting 1 Penguin to 2 Penguins gives 2 pts).
 
 ### Color Bonus Scoring
 The Color Bonus is mainly scored when "LAST CHANCE" is called.
