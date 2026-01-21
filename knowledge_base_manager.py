@@ -1,47 +1,95 @@
 import os
+import time
 import logging
 from dotenv import load_dotenv
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.vectorstores import FAISS  # <-- corrected import
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_community.vectorstores import FAISS
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-from langchain.chains.llm import LLMChain 
 from langchain.prompts import PromptTemplate
+
+# ------------------------------------------------------------------
+# ENV & LOGGING
+# ------------------------------------------------------------------
 
 load_dotenv()
 google_api_key = os.getenv("GOOGLE_API_KEY")
-
 logger = logging.getLogger(__name__)
 
-# Path to the pre-built FAISS index
+# ------------------------------------------------------------------
+# CONSTANTS
+# ------------------------------------------------------------------
 
 FAISS_INDEX_PATH = "faiss_index"
+MIN_SECONDS_BETWEEN_EMBEDS = 2.5
+
+# ------------------------------------------------------------------
+# GLOBAL EMBEDDINGS (CRITICAL FIX)
+# ------------------------------------------------------------------
+
+EMBEDDINGS = GoogleGenerativeAIEmbeddings(
+    model="models/embedding-001",
+    google_api_key=google_api_key
+)
+
+# ------------------------------------------------------------------
+# RATE LIMITER
+# ------------------------------------------------------------------
+
+_last_embed_time = 0.0
+
+def _rate_limit():
+    global _last_embed_time
+    now = time.time()
+    elapsed = now - _last_embed_time
+    if elapsed < MIN_SECONDS_BETWEEN_EMBEDS:
+        time.sleep(MIN_SECONDS_BETWEEN_EMBEDS - elapsed)
+    _last_embed_time = time.time()
+
+# ------------------------------------------------------------------
+# VECTORSTORE LOADING
+# ------------------------------------------------------------------
 
 def load_vectorstore():
     """Load the FAISS vector store from disk."""
     logger.info(f"Loading vector store from '{FAISS_INDEX_PATH}'...")
+
     if not os.path.exists(FAISS_INDEX_PATH):
         raise FileNotFoundError(
             f"FAISS index not found at '{FAISS_INDEX_PATH}'. "
             "Please run 'create_vectorstore.py' first."
         )
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=google_api_key)
+
     vectorstore = FAISS.load_local(
-        FAISS_INDEX_PATH, 
-        embeddings,
-        allow_dangerous_deserialization=True 
+        FAISS_INDEX_PATH,
+        EMBEDDINGS,
+        allow_dangerous_deserialization=True
     )
+
     logger.info("Vector store loaded successfully.")
     return vectorstore
 
+# ------------------------------------------------------------------
+# INPUT ROUTING (SKIP RAG FOR CASUAL CHAT)
+# ------------------------------------------------------------------
+
+def should_use_rag(user_input: str) -> bool:
+    casual_phrases = [
+        "hi", "hello", "hey",
+        "thanks", "thank you",
+        "bye", "goodbye"
+    ]
+    text = user_input.lower().strip()
+    return not any(p in text for p in casual_phrases)
+
+# ------------------------------------------------------------------
+# CONVERSATION CHAIN
+# ------------------------------------------------------------------
 
 def get_conversation_chain(vectorstore):
-    """
-    Creates a RAG chain using ConversationalRetrievalChain with Gemini LLM.
-    """
+    """Creates a RAG chain using ConversationalRetrievalChain with Gemini."""
 
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash-lite",
@@ -49,50 +97,61 @@ def get_conversation_chain(vectorstore):
         google_api_key=google_api_key
     )
 
-    # 1. DEFINE THE RAG ANSWERING PROMPT
-    # This prompt is used ONLY for the final answer, combining context, history, and the question.
-    # Note: It MUST contain {context}, {chat_history}, and {question} variables.
     final_qa_template = (
         "You are a helpful and friendly game master for the card game 'Sea Salt & Paper'. "
         "Your primary role is to answer players' questions about the game rules based on the provided CONTEXT. "
-        "Answer concisely and clearly. Use markdown for formatting if it helps with clarity (e.g., bullet points for lists).\n\n"
+        "Answer concisely and clearly. Use markdown for formatting if it helps with clarity.\n\n"
         "BEHAVIOR RULES:\n"
         "- If a user's question is about the game rules, first use the provided CONTEXT to answer.\n"
-        "- If the answer cannot be found or is unclear from the provided CONTEXT, you may use reliable online sources to supplement your answer.\n"
-        "- Always prioritize accuracy and consistency with the official 'Sea Salt & Paper' rules.\n"
-        "- If a user asks a question that is NOT related to the game, politely state that you can only answer questions about 'Sea Salt & Paper'.\n"
-        "- If the user says something conversational like 'hello', 'thanks', or 'goodbye', respond in a friendly and natural way without bringing up game rules. For example, if they say 'Thank you', you should say 'You're welcome!' or something similar.\n\n"
+        "- If the answer cannot be found or is unclear from the provided CONTEXT, you may use reliable online sources.\n"
+        "- Always prioritize accuracy with the official 'Sea Salt & Paper' rules.\n"
+        "- If a question is NOT related to the game, politely state that you can only answer questions about the game.\n"
+        "- If the user is conversational (hello, thanks, goodbye), respond naturally.\n\n"
         "CHAT HISTORY:\n{chat_history}\n\n"
         "CONTEXT:\n{context}\n\n"
         "QUESTION: {question}\n\n"
         "ANSWER:"
     )
-    
-    # LangChain often performs better with this type of PromptTemplate string for RAG chains
-    # than with the MessagesPlaceholder structure you used before.
+
     QA_PROMPT = PromptTemplate(
-        template=final_qa_template, 
+        template=final_qa_template,
         input_variables=["context", "chat_history", "question"]
     )
 
-    # 2. CREATE THE CONVERSATION MEMORY
-    # ConversationalRetrievalChain needs its own memory.
     memory = ConversationBufferMemory(
-        memory_key="chat_history", 
+        memory_key="chat_history",
         return_messages=True,
         output_key="answer"
     )
 
-    # 3. CONSTRUCT THE CONVERSATIONAL RETRIEVAL CHAIN
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    retriever = vectorstore.as_retriever(
+        search_kwargs={"k": 2}  # reduced from 3
+    )
 
     rag_chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=retriever,
         memory=memory,
-        combine_docs_chain_kwargs={"prompt": QA_PROMPT}, 
+        combine_docs_chain_kwargs={"prompt": QA_PROMPT},
         return_source_documents=True,
         output_key="answer"
     )
 
-    return rag_chain
+    return rag_chain, llm
+
+# ------------------------------------------------------------------
+# SAFE INVOKE WRAPPER
+# ------------------------------------------------------------------
+
+def invoke_safely(rag_chain, llm, user_input: str):
+    """
+    Routes input either to RAG (with rate limiting)
+    or directly to the LLM for casual chat.
+    """
+
+    if should_use_rag(user_input):
+        _rate_limit()
+        result = rag_chain.invoke({"question": user_input})
+        return result["answer"]
+    else:
+        return llm.invoke(user_input).content
