@@ -219,9 +219,21 @@ async def handle_color_bonus_choice(update: Update, context: ContextTypes.DEFAUL
         parse_mode=ParseMode.MARKDOWN_V2
     )
 
-async def fetch_online_info_with_gemini(query: str):
-    """Fetches supporting online info using Gemini."""
+async def fetch_online_info_with_gemini(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+    """Handles /ask command using Gemini for online info."""
+
     try:
+        query = update.message.text.partition(" ")[2].strip()
+
+        if not query:
+            await update.message.reply_text(
+                "Please provide a question.\nExample:\n/ask How does Last Chance work?"
+            )
+            return
+
         gemini = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash-lite",
             temperature=0.7,
@@ -229,17 +241,22 @@ async def fetch_online_info_with_gemini(query: str):
         )
 
         prompt = (
-            "Search for the most accurate and recent information about the card game and its expansion packs"
-            "'Sea Salt & Paper'. Summarize it concisely. If there’s overlap with rulebook info, clarify it.\n\n"
+            "Search for the most accurate and recent information about the card game "
+            "'Sea Salt & Paper' and its expansion packs. "
+            "Summarize it concisely. If there’s overlap with rulebook info, clarify it.\n\n"
             f"Question: {query}"
         )
 
         response = await gemini.ainvoke(prompt)
-        return response.content if hasattr(response, "content") else str(response)
-    
+        answer = response.content if hasattr(response, "content") else str(response)
+
+        await update.message.reply_text(answer)
+
     except Exception as e:
-        logger.error(f"Gemini fetch failed: {e}")
-        return None
+        logger.error(f"Gemini fetch failed: {e}", exc_info=True)
+        await update.message.reply_text(
+            "⚠️ Sorry, I couldn’t fetch online info right now."
+        )
 
 
 def setup_telegram_bot(vectorstore, port: int, webhook_url: str):
@@ -286,6 +303,7 @@ def setup_telegram_bot_local(vectorstore):
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler('score', score))
     app.add_handler(CommandHandler('color_bonus', color_bonus))
+    app.add_handler(CommandHandler('ask', fetch_online_info_with_gemini))
     app.add_handler(CallbackQueryHandler(handle_color_bonus_choice, pattern="^color_bonus_"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(error_handler)
